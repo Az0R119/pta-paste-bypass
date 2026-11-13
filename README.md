@@ -1,67 +1,84 @@
-# PTA 禁用粘贴的绕法 + 答案
+# PTA Paste Bypass
 
-两个东西：
+Bypass the "code pasting is disabled" restriction on [PTA](https://pintia.cn) (拼题A / Pintia), so you can write code in your editor of choice and paste it in.
 
-1. **`PTA一键填入_发给同学.js`** —— 一段浏览器控制台脚本，让 PTA 代码框接受你从本地粘过去的代码
-2. **答案文件** —— 一组 PTA 习题的 C 语言答案
+Works on Chrome, Edge, and any Chromium browser. No extension required if you use the console method.
 
----
+## Why the usual tricks fail
 
-## 一、PTA 禁用粘贴怎么办
+PTA's editor is **CodeMirror 6**. Its content does not live in the DOM — it lives in an `EditorView` object. That is why:
 
-PTA 题目集开了"禁用代码粘贴"后，`Ctrl+V` 会被拦掉。装扩展、改 DOM 文字都不稳定。
+| Approach | Result | Reason |
+|---|---|---|
+| `Ctrl+V` | Blocked | Triggers the paste event, which PTA intercepts |
+| "Don't Fuck With Paste"-style extensions | Unreliable | They patch DOM events; PTA also guards inside the editor |
+| Editing `.cm-content` text in DevTools | Lost on repaint | The DOM changes, but CodeMirror's internal document does not |
+| **Calling `view.dispatch()`** | Works | Uses the editor's own programmatic API, bypassing the event chain entirely |
 
-真正管用的：**直接调用编辑器的程序化接口写内容**，不走粘贴通道，拦截器碰不到。
-
-### 三步操作（Chrome / Edge）
-
-1. 打开 PTA 做题页面，按 `F12`，切到 **Console（控制台）**
-2. 若提示 `Don't paste code in DevTools console`，**手敲** `allow pasting` 回车（只需一次）
-3. 把 `PTA一键填入_发给同学.js` 全部内容粘进控制台，回车 → 弹框里粘代码 → 确定
-
-然后点 PTA 页面底部的「提交本题作答」。
-
-### 原理
-
-PTA 用的是 **CodeMirror 6**。内容不在 DOM 里，而在 `EditorView` 对象里：
+The real text path is:
 
 ```
-.cm-content 元素  →  el.cmTile.view  →  view.state.doc（真正的文本）
+.cm-content element  ->  el.cmTile.view  ->  view.state.doc
 ```
 
-正规的写入方式是：
+## Usage
+
+### Option A — Console (no install)
+
+1. Open the PTA problem page, press `F12`, switch to **Console**
+2. If Chrome warns `Don't paste code in DevTools console`, type `allow pasting` by hand and press Enter (once per browser profile)
+3. Paste this and press Enter:
 
 ```js
-view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: '新内容' } });
+const el = [...document.querySelectorAll('.cm-content')]
+  .filter(e => e.getAttribute('contenteditable') === 'true')
+  .sort((a, b) => b.getBoundingClientRect().height - a.getBoundingClientRect().height)[0];
+
+el.cmTile.view.dispatch({
+  changes: { from: 0, to: el.cmTile.view.state.doc.length, insert: 'YOUR CODE HERE' }
+});
 ```
 
-这是编辑器的**程序化编辑接口**，和用户打字走同一条内部路径，但绕开了键盘和粘贴事件。PTA 挂在 `paste` 上的拦截器不会被触发。
+Replace `YOUR CODE HERE` with your code. For multi-line code, use backticks:
 
-几种做法对比：
+```js
+insert: `#include <stdio.h>
+int main() { return 0; }`
+```
 
-| 做法 | 结果 | 原因 |
-|---|---|---|
-| 手动 `Ctrl+V` | ❌ 被拦 | 触发 paste 事件 |
-| 装"解除粘贴"扩展 | ⚠️ 时好时坏 | 只拦 DOM 事件，编辑器内部还在拦 |
-| 控制台改 DOM 文字 | ❌ 一刷新就没 | CodeMirror 内部文档没变 |
-| **调用 `view.dispatch`** | ✅ 有效 | 走编辑器正规接口 |
+Then click **提交本题作答** (Submit).
 
----
+### Option B — Tampermonkey userscript (install once)
 
-## 二、答案
+1. Install [Tampermonkey](https://www.tampermonkey.net/)
+2. Open [`pta-paste-bypass.user.js`](pta-paste-bypass.user.js) and click **Raw** — Tampermonkey will offer to install it
+3. A blue **Insert code** button appears at the bottom-right of any PTA problem page
 
-| 文件 | 题目 | 类型 |
-|---|---|---|
-| `4-1_五边形面积.c` | 实现 `is_triangle` / `area`，求五边形面积 | 函数题 |
-| `4-2_最大公约数.c` | `int gcd(int x, int y)` 辗转相除法 | 函数题 |
-| `4-3_数字金字塔.c` | `void pyramid(int n)` 打印数字金字塔 | 函数题 |
-| `5-1_整数的持续性.c` | 求区间内持续性最长的整数 | 编程题（完整程序） |
-| `5-2_求完全数的个数.c` | 统计 ≤n 的完全数个数 | 编程题（完整程序） |
+Two global helpers are also exposed in the console:
 
-**注意区分**：函数题只填**函数体**，不要带 `#include` 和 `main` —— 裁判程序自己提供。编程题才需要完整程序。
+```js
+ptaSetCode('your code')   // replace editor content
+ptaGetCode()              // read current content
+```
 
----
+## How it works
 
-## 三、免责
+`view.dispatch({changes})` is CodeMirror's official programmatic editing API. It is the same internal path a real keystroke takes, minus the keyboard and paste events. PTA's interceptor listens on `paste`, so it never fires.
 
-这是"把本地写好的代码输入到网页"的技术手段，不改变提交内容。**请遵守课程对作业和考试的规定**——老师明确要求现场手写时，用这个就违规了。平时练习和允许用编辑器的作业，随便用。
+The script finds the editor by walking `.cm-content` elements with `contenteditable="true"` and reading the non-public `cmTile.view` property. When a page holds several editors (problem description, test cases, the code box), it picks the tallest one.
+
+## Limitations
+
+- Depends on CodeMirror 6's `cmTile.view` property, which is not part of CodeMirror's public API. If PTA upgrades or switches editors, the selector may need updating — open an issue if that happens.
+- The `contenteditable="true"` filter is what distinguishes the real code box from read-only CodeMirror instances used for problem statements and sample tests.
+- Only affects the current page. Nothing is stored and no network requests are made.
+
+## Disclaimer
+
+This is a tool for getting locally-written code into a web editor. It does not change what you submit.
+
+Respect your course rules. If your instructor requires you to type code on the spot without an IDE, using this violates that rule.
+
+## License
+
+MIT
